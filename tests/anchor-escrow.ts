@@ -6,245 +6,279 @@ import { PublicKey, SystemProgram, Transaction, Connection, Commitment } from '@
 import { TOKEN_PROGRAM_ID, Token } from "@solana/spl-token";
 import { assert } from "chai";
 
-describe('anchor-escrow', () => {
+describe('mars-escrow', () => {
   const commitment: Commitment = 'processed';
-  const connection = new Connection('https://rpc-mainnet-fork.dappio.xyz', { commitment, wsEndpoint: 'wss://rpc-mainnet-fork.dappio.xyz/ws' });
+  const connection = new Connection('https://api.devnet.solana.com', { commitment, wsEndpoint: 'wss://api.devnet.solana.com/' });
   const options = anchor.Provider.defaultOptions();
   const wallet = NodeWallet.local();
-  const provider = new anchor.Provider(connection, wallet, options);
+  // const provider = new anchor.Provider(connection, wallet, options);
+  const provider = anchor.Provider.env();
 
   anchor.setProvider(provider);
 
-  const program = anchor.workspace.AnchorEscrow as Program<AnchorEscrow>;
+  const idl = JSON.parse(
+    require("fs").readFileSync("./target/idl/anchor_escrow.json", "utf8")
+  );
+  const programId = new anchor.web3.PublicKey("FBqs6w6dNmKCvL2J55K8VKP1CNV7vKfUYyLskhZfaWas");
+  const program = new anchor.Program(idl, programId);
 
-  let mintA = null as Token;
-  let mintB = null as Token;
-  let initializerTokenAccountA = null;
-  let initializerTokenAccountB = null;
-  let takerTokenAccountA = null;
-  let takerTokenAccountB = null;
+  let escrow_account_pda = null;
+  let escrow_account_bump = null;
+
   let vault_account_pda = null;
   let vault_account_bump = null;
-  let vault_authority_pda = null;
 
-  const takerAmount = 1000;
-  const initializerAmount = 500;
+  let user_escrow_account_pda = null;
 
-  const escrowAccount = anchor.web3.Keypair.generate();
-  const payer = anchor.web3.Keypair.generate();
-  const mintAuthority = anchor.web3.Keypair.generate();
-  const initializerMainAccount = anchor.web3.Keypair.generate();
-  const takerMainAccount = anchor.web3.Keypair.generate();
+  let stakers = [];
+  let staker_count = 3;
+  for (let i = 0; i < staker_count; i++) {
+    stakers[i] = new anchor.web3.Keypair();
+  }
 
-  it("Initialize program state", async () => {
-    // Airdropping tokens to a payer.
-    await provider.connection.confirmTransaction(
-      await provider.connection.requestAirdrop(payer.publicKey, 1000000000),
-      "processed"
-    );
 
-    // Fund Main Accounts
-    await provider.send(
-      (() => {
-        const tx = new Transaction();
-        tx.add(
-          SystemProgram.transfer({
-            fromPubkey: payer.publicKey,
-            toPubkey: initializerMainAccount.publicKey,
-            lamports: 100000000,
-          }),
-          SystemProgram.transfer({
-            fromPubkey: payer.publicKey,
-            toPubkey: takerMainAccount.publicKey,
-            lamports: 100000000,
-          })
-        );
-        return tx;
-      })(),
-      [payer]
-    );
+  let stake_amount = 1000000
 
-    mintA = await Token.createMint(
-      provider.connection,
-      payer,
-      mintAuthority.publicKey,
-      null,
-      0,
-      TOKEN_PROGRAM_ID
-    );
-
-    mintB = await Token.createMint(
-      provider.connection,
-      payer,
-      mintAuthority.publicKey,
-      null,
-      0,
-      TOKEN_PROGRAM_ID
-    );
-
-    initializerTokenAccountA = await mintA.createAccount(initializerMainAccount.publicKey);
-    takerTokenAccountA = await mintA.createAccount(takerMainAccount.publicKey);
-
-    initializerTokenAccountB = await mintB.createAccount(initializerMainAccount.publicKey);
-    takerTokenAccountB = await mintB.createAccount(takerMainAccount.publicKey);
-
-    await mintA.mintTo(
-      initializerTokenAccountA,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      initializerAmount
-    );
-
-    await mintB.mintTo(
-      takerTokenAccountB,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      takerAmount
-    );
-
-    let _initializerTokenAccountA = await mintA.getAccountInfo(initializerTokenAccountA);
-    let _takerTokenAccountB = await mintB.getAccountInfo(takerTokenAccountB);
-
-    assert.ok(_initializerTokenAccountA.amount.toNumber() == initializerAmount);
-    assert.ok(_takerTokenAccountB.amount.toNumber() == takerAmount);
+  it("Funding stakers", async () => {
+    for (let i = 0; i < staker_count; i++) {
+      await provider.connection.confirmTransaction(
+        await provider.connection.requestAirdrop(stakers[i].publicKey, 3000000000),
+        "processed"
+      );
+    }
   });
 
-  it("Initialize escrow", async () => {
-    const [_vault_account_pda, _vault_account_bump] = await PublicKey.findProgramAddress(
-      [Buffer.from(anchor.utils.bytes.utf8.encode("token-seed"))],
-      program.programId
-    );
-    vault_account_pda = _vault_account_pda;
-    vault_account_bump = _vault_account_bump;
-
-    const [_vault_authority_pda, _vault_authority_bump] = await PublicKey.findProgramAddress(
+  it("Init Escrow", async () => {
+    //escrow account
+    const [_escrow_account_pda, _escrow_account_bump] = await PublicKey.findProgramAddress(
       [Buffer.from(anchor.utils.bytes.utf8.encode("escrow"))],
       program.programId
     );
-    vault_authority_pda = _vault_authority_pda;
+    escrow_account_pda = _escrow_account_pda;
+    escrow_account_bump = _escrow_account_bump;
 
-    await program.rpc.initialize(
-      vault_account_bump,
-      new anchor.BN(initializerAmount),
-      new anchor.BN(takerAmount),
-      {
-        accounts: {
-          initializer: initializerMainAccount.publicKey,
-          vaultAccount: vault_account_pda,
-          mint: mintA.publicKey,
-          initializerDepositTokenAccount: initializerTokenAccountA,
-          initializerReceiveTokenAccount: initializerTokenAccountB,
-          escrowAccount: escrowAccount.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        },
-        instructions: [
-          await program.account.escrowAccount.createInstruction(escrowAccount),
-        ],
-        signers: [escrowAccount, initializerMainAccount],
-      }
+    console.log("escrow account pda,bump", escrow_account_pda.toString(), _escrow_account_bump.toString())
+
+    //valut account
+    const [_vault_account_pda, _vault_account_bump] = await PublicKey.findProgramAddress(
+      [Buffer.from(anchor.utils.bytes.utf8.encode("vault"))],
+      program.programId
     );
+    vault_account_pda = _vault_account_pda;
+    console.log("vault account pda,bump", vault_account_pda.toString(), _vault_account_bump.toString())
+    vault_account_bump = _vault_account_bump;
 
-    let _vault = await mintA.getAccountInfo(vault_account_pda);
+
+    await program.rpc.init(vault_account_bump, {
+      accounts: {
+        escrowAccount: escrow_account_pda,
+        vaultAccount: vault_account_pda,
+        payer: provider.wallet.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      }
+    });
 
     let _escrowAccount = await program.account.escrowAccount.fetch(
-      escrowAccount.publicKey
+      escrow_account_pda
     );
+    assert.ok(_escrowAccount.index.toNumber() == 0);
 
-    // Check that the new owner is the PDA.
-    assert.ok(_vault.owner.equals(vault_authority_pda));
 
-    // Check that the values in the escrow account match what we expect.
-    assert.ok(_escrowAccount.initializerKey.equals(initializerMainAccount.publicKey));
-    assert.ok(_escrowAccount.initializerAmount.toNumber() == initializerAmount);
-    assert.ok(_escrowAccount.takerAmount.toNumber() == takerAmount);
-    assert.ok(
-      _escrowAccount.initializerDepositTokenAccount.equals(initializerTokenAccountA)
-    );
-    assert.ok(
-      _escrowAccount.initializerReceiveTokenAccount.equals(initializerTokenAccountB)
-    );
   });
 
-  it("Exchange escrow state", async () => {
-    await program.rpc.exchange({
-      accounts: {
-        taker: takerMainAccount.publicKey,
-        takerDepositTokenAccount: takerTokenAccountB,
-        takerReceiveTokenAccount: takerTokenAccountA,
-        initializerDepositTokenAccount: initializerTokenAccountA,
-        initializerReceiveTokenAccount: initializerTokenAccountB,
-        initializer: initializerMainAccount.publicKey,
-        escrowAccount: escrowAccount.publicKey,
-        vaultAccount: vault_account_pda,
-        vaultAuthority: vault_authority_pda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      },
-      signers: [takerMainAccount]
-    });
+  it("stake should fail with insufficient funds", async () => {
+    // get current index
+    let _escrowAccount = await program.account.escrowAccount.fetch(
+      escrow_account_pda
+    );
+    let stake_index = _escrowAccount.index.toNumber();
 
-    let _takerTokenAccountA = await mintA.getAccountInfo(takerTokenAccountA);
-    let _takerTokenAccountB = await mintB.getAccountInfo(takerTokenAccountB);
-    let _initializerTokenAccountA = await mintA.getAccountInfo(initializerTokenAccountA);
-    let _initializerTokenAccountB = await mintB.getAccountInfo(initializerTokenAccountB);
+    //get user escrow account pda
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
+    user_escrow_account_pda = _user_escrow_account_pda;
+    console.log("user escrow account pda, dump", _user_escrow_account_pda, _user_escrow_account_bump);
 
-    assert.ok(_takerTokenAccountA.amount.toNumber() == initializerAmount);
-    assert.ok(_initializerTokenAccountA.amount.toNumber() == 0);
-    assert.ok(_initializerTokenAccountB.amount.toNumber() == takerAmount);
-    assert.ok(_takerTokenAccountB.amount.toNumber() == 0);
+    // stake
+    try {
+      await program.rpc.stake(
+        new anchor.BN(stake_amount * 100000),
+        {
+          accounts: {
+            staker: stakers[0].publicKey,
+            vaultAccount: vault_account_pda,
+            escrowAccount: escrow_account_pda,
+            userEscrowAccount: _user_escrow_account_pda,
+            systemProgram: anchor.web3.SystemProgram.programId,
+            rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+          },
+          signers: [stakers[0]]
+        }
+      );
+    } catch (error) {
+      assert(error.code == 2003); //a raw constraint was violated
+    }
   });
 
-  it("Initialize escrow and cancel escrow", async () => {
-    // Put back tokens into initializer token A account.
-    await mintA.mintTo(
-      initializerTokenAccountA,
-      mintAuthority.publicKey,
-      [mintAuthority],
-      initializerAmount
+  it("stake (3 users with his own wallet) success with enough funds", async () => {
+    let first_index = -1;
+
+    for (let i = 0; i < staker_count; i++) {
+
+      let _escrowAccount = await program.account.escrowAccount.fetch(
+        escrow_account_pda
+      );
+      let stake_index = _escrowAccount.index.toNumber();
+      if (first_index < 0)
+        first_index = stake_index;
+
+      //get user escrow account pda
+      const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+        [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+          new anchor.BN(stake_index).toString()
+        ))],
+        program.programId
+      );
+      user_escrow_account_pda = _user_escrow_account_pda;
+      console.log("user escrow account pda, dump", _user_escrow_account_pda, _user_escrow_account_bump);
+
+      // stake
+      await program.rpc.stake(
+        new anchor.BN(stake_amount),
+        {
+          accounts: {
+            staker: stakers[0].publicKey,
+            vaultAccount: vault_account_pda,
+            escrowAccount: escrow_account_pda,
+            userEscrowAccount: _user_escrow_account_pda,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          },
+          signers: [stakers[0]]
+        }
+      );
+    }
+    let _escrowAccount = await program.account.escrowAccount.fetch(
+      escrow_account_pda
+    );
+    // Check staker index change
+    assert.ok(first_index + staker_count == _escrowAccount.index.toNumber());
+  });
+
+  it("cancel first stake fails with wrong signer", async () => {
+    // get user escrow account
+    let stake_index = 0;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
     );
 
-    await program.rpc.initialize(
-      vault_account_bump,
-      new anchor.BN(initializerAmount),
-      new anchor.BN(takerAmount),
+    let balance_before = await provider.connection.getBalance(stakers[0].publicKey);
+    try{
+      await program.rpc.cancel(
+        new anchor.BN(stake_index),
+        {
+          accounts: {
+            staker: stakers[0].publicKey,
+            vaultAccount: vault_account_pda,
+            userEscrowAccount: _user_escrow_account_pda,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          },
+          signers: [stakers[0]]
+        }
+      );
+      } catch(error)
+      {
+        assert.ok(error.code = 2001); // A has_one constraint was violated
+      }
+    let balance_after = await provider.connection.getBalance(stakers[0].publicKey);
+    assert(balance_after - balance_before, stake_amount)
+
+  });
+
+  it("cancel first stake success with correct signer", async () => {
+    // get user escrow account
+    let stake_index = 0;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
+
+    let balance_before = await provider.connection.getBalance(stakers[0].publicKey);
+    await program.rpc.cancel(
+      new anchor.BN(stake_index),
       {
         accounts: {
-          initializer: initializerMainAccount.publicKey,
+          staker: stakers[0].publicKey,
           vaultAccount: vault_account_pda,
-          mint: mintA.publicKey,
-          initializerDepositTokenAccount: initializerTokenAccountA,
-          initializerReceiveTokenAccount: initializerTokenAccountB,
-          escrowAccount: escrowAccount.publicKey,
+          userEscrowAccount: _user_escrow_account_pda,
           systemProgram: anchor.web3.SystemProgram.programId,
-          rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-          tokenProgram: TOKEN_PROGRAM_ID,
         },
-        instructions: [
-          await program.account.escrowAccount.createInstruction(escrowAccount),
-        ],
-        signers: [escrowAccount, initializerMainAccount],
+        signers: [stakers[0]]
       }
     );
+    let balance_after = await provider.connection.getBalance(stakers[0].publicKey);
+    assert(balance_after - balance_before, stake_amount)
 
-    // Cancel the escrow.
-    await program.rpc.cancel({
-      accounts: {
-        initializer: initializerMainAccount.publicKey,
-        initializerDepositTokenAccount: initializerTokenAccountA,
-        vaultAccount: vault_account_pda,
-        vaultAuthority: vault_authority_pda,
-        escrowAccount: escrowAccount.publicKey,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      },
-      signers: [initializerMainAccount]
-    });
+  });
 
-    // Check the final owner should be the provider public key.
-    const _initializerTokenAccountA = await mintA.getAccountInfo(initializerTokenAccountA);
-    assert.ok(_initializerTokenAccountA.owner.equals(initializerMainAccount.publicKey));
+  it("release should fail with wrong signer", async () => {
+    let receiver = new anchor.web3.Keypair();
+    console.log("receiver: ", receiver.publicKey.toString());
 
-    // Check all the funds are still there.
-    assert.ok(_initializerTokenAccountA.amount.toNumber() == initializerAmount);
+    // release
+    try {
+      await program.rpc.release(
+        {
+          accounts: {
+            staker: stakers[1].publicKey,
+            receiver: receiver.publicKey,
+            escrowAccount: escrow_account_pda,
+            vaultAccount: vault_account_pda,
+            userEscrowAccount: user_escrow_account_pda,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          },
+          signers: [stakers[1]]
+        }
+      );
+    } catch (error) {
+      assert.ok(error.code = 2001); // A has_one constraint was violated
+    }
+
+  });
+
+  it("release success with correct signer", async () => {
+    // get current index
+    let _escrowAccount = await program.account.escrowAccount.fetch(
+      escrow_account_pda
+    );
+    let receiver = new anchor.web3.Keypair();
+    console.log("receiver: ", receiver.publicKey.toString());
+
+    // stake
+    await program.rpc.release(
+      {
+        accounts: {
+          staker: stakers[0].publicKey,
+          receiver: receiver.publicKey,
+          escrowAccount: escrow_account_pda,
+          vaultAccount: vault_account_pda,
+          userEscrowAccount: user_escrow_account_pda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        },
+        signers: [stakers[0]]
+      }
+    );
+    let receiver_balance = await provider.connection.getBalance(vault_account_pda);
+    console.log("receiver balance", receiver_balance);
+
+    assert.ok(receiver_balance >= stake_amount);
   });
 });
