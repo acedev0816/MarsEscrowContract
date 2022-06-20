@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use anchor_lang::system_program::{transfer};
+use anchor_lang::system_program::{transfer, Transfer};
 
 declare_id!("4MgS65CAEk8NN8EWt41SZU9cFpZ5xbaG5QeS5HL9b8kB");
 
@@ -54,20 +54,52 @@ pub mod anchor_escrow {
         **from.try_borrow_mut_lamports()? -= amount;
         **to.try_borrow_mut_lamports()? += amount;
         
+        ctx.accounts.user_escrow_account.amount = 0;
         // 
+        Ok(())
+    }
+
+    pub fn modify(
+        ctx: Context<Modify>,
+        new_amount: u64,
+    ) -> Result<()> {
+        let amount:u64 = ctx.accounts.user_escrow_account.amount;
+        let vault: AccountInfo = ctx.accounts.vault_account.to_account_info();
+        let staker: AccountInfo = ctx.accounts.staker.to_account_info();
+        if new_amount > amount{ //deposit
+            let diff_amount:u64 = new_amount - amount;
+            let cpi_ctx:CpiContext<Transfer> = CpiContext::new(
+                ctx.accounts.system_program.to_account_info(),
+                system_program::Transfer{
+                    from: staker,
+                    to: vault
+                }
+            );
+            transfer(cpi_ctx, diff_amount)?;
+        } else { //withdraw
+            let diff_amount:u64 = amount - new_amount;
+            **vault.try_borrow_mut_lamports()? -= diff_amount;
+            **staker.try_borrow_mut_lamports()? += diff_amount;
+        }
+
+        // update amount in user escrow account
+        ctx.accounts.user_escrow_account.amount = new_amount;
+        
         Ok(())
     }
 
     pub fn release(
         ctx: Context<Release>,
+        release_amount: u64,
     ) -> Result<()> {
-        let amount:u64 = ctx.accounts.user_escrow_account.amount;
+
         let from: AccountInfo = ctx.accounts.vault_account.to_account_info();
         let to: AccountInfo = ctx.accounts.receiver.to_account_info();
-        **from.try_borrow_mut_lamports()? -= amount;
-        **to.try_borrow_mut_lamports()? += amount;
+        **from.try_borrow_mut_lamports()? -= release_amount;
+        **to.try_borrow_mut_lamports()? += release_amount;
         
-        
+        ctx.accounts.user_escrow_account.amount -= release_amount;
+
         // update stake_index
         Ok(())
     }
@@ -129,6 +161,7 @@ pub struct Stake<'info> {
     pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
+#[instruction(release_amount:u64)]
 pub struct Release<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(signer, mut)]
@@ -146,7 +179,26 @@ pub struct Release<'info> {
     pub vault_account: AccountInfo<'info>,
     #[account(
         mut,
-        has_one=staker
+        has_one=staker,
+        constraint=user_escrow_account.amount >= release_amount
+    )]
+    pub user_escrow_account: Account<'info, UserEscrowAccount>,
+    pub system_program: Program<'info, System>
+}
+
+#[derive(Accounts)]
+#[instruction(new_amount:u64)]
+pub struct Modify<'info> {
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    #[account(signer, mut)]
+    pub staker: AccountInfo<'info>,
+
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    #[account(mut)]
+    pub vault_account: AccountInfo<'info>,
+    #[account(
+        mut,
+        has_one=staker,
     )]
     pub user_escrow_account: Account<'info, UserEscrowAccount>,
     pub system_program: Program<'info, System>

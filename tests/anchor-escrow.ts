@@ -40,7 +40,7 @@ describe('mars-escrow', () => {
   }
 
 
-  let stake_amount = 100000000
+  let stake_amount = 100000000 //0.1 sol
 
   it("Funding stakers", async () => {
     await provider.connection.confirmTransaction(
@@ -255,6 +255,7 @@ describe('mars-escrow', () => {
     // release
     try {
       await program.rpc.release(
+        new anchor.BN(stake_amount),
         {
           accounts: {
             staker: stakers[stake_index].publicKey,
@@ -273,7 +274,7 @@ describe('mars-escrow', () => {
 
   });
 
-  it("release success with correct signer", async () => {
+  it("release half success with correct signer", async () => {
     // get current index
     let stake_index = 1;
     const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
@@ -282,6 +283,7 @@ describe('mars-escrow', () => {
       ))],
       program.programId
     );
+    const release_amount = stake_amount/2;
     //check user escrow account
     let _uea = await program.account.userEscrowAccount.fetch(
       _user_escrow_account_pda
@@ -294,6 +296,7 @@ describe('mars-escrow', () => {
     // console.log("program.account", program.account);
     // stake
     await program.rpc.release(
+      new anchor.BN(release_amount), // release amount
       {
         accounts: {
           staker: stakers[stake_index].publicKey,
@@ -307,7 +310,80 @@ describe('mars-escrow', () => {
       }
     );
     let receiver_balance = await provider.connection.getBalance(receiver.publicKey);
-    console.log("receiver balance", receiver_balance, stake_amount);
-    assert.ok(receiver_balance >= stake_amount);
+    console.log("receiver balance", receiver_balance, "release amount", release_amount);
+    assert.ok(receiver_balance >= release_amount);
+      // get updated amount
+    let user_escrow_account = await program.account.userEscrowAccount.fetch(_user_escrow_account_pda);
+    console.log("updated amount", user_escrow_account.amount.toNumber());
   });
+
+  it("Add 0.1 SOL to existing stake account", async () => {
+    let stake_index = 1;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[stake_index].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
+    const new_amount = stake_amount/2 + stake_amount;
+    //check user escrow account
+    let uea_account = await program.account.userEscrowAccount.fetch(
+      _user_escrow_account_pda
+    );
+    console.log("uea amount brefore call", uea_account.amount.toNumber());
+    // smodify
+    await program.rpc.modify(
+      new anchor.BN(new_amount), // new amount
+      {
+        accounts: {
+          staker: stakers[stake_index].publicKey,
+          vaultAccount: vault_account_pda,
+          userEscrowAccount: _user_escrow_account_pda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        },
+        signers: [stakers[stake_index]]
+      }
+    );
+    let uea_account_new = await program.account.userEscrowAccount.fetch(_user_escrow_account_pda);
+    console.log("uea amount after call", uea_account_new.amount.toNumber());
+    assert.ok(uea_account_new.amount.toNumber() == new_amount);
+  });
+
+  it("Reduce 0.1 SOL to existing stake account", async () => {
+    let stake_index = 1;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[stake_index].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
+    const new_amount = stake_amount/2;
+    //check user escrow account
+    let uea_account = await program.account.userEscrowAccount.fetch(
+      _user_escrow_account_pda
+    );
+    console.log("uea amount brefore call", uea_account.amount.toNumber());
+    let staker_balance = await provider.connection.getBalance(stakers[stake_index].publicKey);
+
+    // smodify
+    await program.rpc.modify(
+      new anchor.BN(new_amount), // new amount
+      {
+        accounts: {
+          staker: stakers[stake_index].publicKey,
+          vaultAccount: vault_account_pda,
+          userEscrowAccount: _user_escrow_account_pda,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        },
+        signers: [stakers[stake_index]]
+      }
+    );
+    let uea_account_new = await program.account.userEscrowAccount.fetch(_user_escrow_account_pda);
+    console.log("uea amount after call", uea_account_new.amount.toNumber());
+    assert.ok(uea_account_new.amount.toNumber() == new_amount);
+    // check staker balance
+    let staker_balance_new = await provider.connection.getBalance(stakers[stake_index].publicKey);
+    console.log("staker balance change", staker_balance_new - staker_balance);
+  });
+
 });
