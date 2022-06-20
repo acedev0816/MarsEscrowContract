@@ -11,15 +11,15 @@ describe('mars-escrow', () => {
   const connection = new Connection('https://api.devnet.solana.com', { commitment, wsEndpoint: 'wss://api.devnet.solana.com/' });
   const options = anchor.Provider.defaultOptions();
   const wallet = NodeWallet.local();
-  // const provider = new anchor.Provider(connection, wallet, options);
+  // let provider = new anchor.Provider(connection, wallet, options);
   const provider = anchor.Provider.env();
-
+  console.log("Test Start" /*, provider.connection._rpcEndPoint*/);
   anchor.setProvider(provider);
 
   const idl = JSON.parse(
     require("fs").readFileSync("./target/idl/anchor_escrow.json", "utf8")
   );
-  const programId = new anchor.web3.PublicKey("FBqs6w6dNmKCvL2J55K8VKP1CNV7vKfUYyLskhZfaWas");
+  const programId = new anchor.web3.PublicKey("4MgS65CAEk8NN8EWt41SZU9cFpZ5xbaG5QeS5HL9b8kB");
   const program = new anchor.Program(idl, programId);
 
   let escrow_account_pda = null;
@@ -31,20 +31,35 @@ describe('mars-escrow', () => {
   let user_escrow_account_pda = null;
 
   let stakers = [];
-  let staker_count = 3;
+  let staker_count = 2;
+
+  let payer = new anchor.web3.Keypair();
+
   for (let i = 0; i < staker_count; i++) {
     stakers[i] = new anchor.web3.Keypair();
   }
 
 
-  let stake_amount = 1000000
+  let stake_amount = 100000000
 
   it("Funding stakers", async () => {
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(payer.publicKey, 2000000000),
+      "processed"
+    );
     for (let i = 0; i < staker_count; i++) {
-      await provider.connection.confirmTransaction(
-        await provider.connection.requestAirdrop(stakers[i].publicKey, 3000000000),
-        "processed"
-      );
+
+      let trx = new anchor.web3.Transaction();
+      trx.add(anchor.web3.SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: stakers[i].publicKey,
+        lamports: 900000000
+      }));
+      let sig = await anchor.web3.sendAndConfirmTransaction(
+        provider.connection,
+        trx,
+        [payer]
+      )
     }
   });
 
@@ -124,7 +139,7 @@ describe('mars-escrow', () => {
     }
   });
 
-  it("stake (3 users with his own wallet) success with enough funds", async () => {
+  it("stake (2 users with his own wallet) success with enough funds", async () => {
     let first_index = -1;
 
     for (let i = 0; i < staker_count; i++) {
@@ -138,26 +153,26 @@ describe('mars-escrow', () => {
 
       //get user escrow account pda
       const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
-        [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        [stakers[i].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
           new anchor.BN(stake_index).toString()
         ))],
         program.programId
       );
       user_escrow_account_pda = _user_escrow_account_pda;
-      console.log("user escrow account pda, dump", _user_escrow_account_pda, _user_escrow_account_bump);
+      console.log("user escrow account pda, dump", _user_escrow_account_pda.toString(), _user_escrow_account_bump);
 
       // stake
       await program.rpc.stake(
         new anchor.BN(stake_amount),
         {
           accounts: {
-            staker: stakers[0].publicKey,
+            staker: stakers[i].publicKey,
             vaultAccount: vault_account_pda,
             escrowAccount: escrow_account_pda,
             userEscrowAccount: _user_escrow_account_pda,
             systemProgram: anchor.web3.SystemProgram.programId,
           },
-          signers: [stakers[0]]
+          signers: [stakers[i]]
         }
       );
     }
@@ -172,32 +187,29 @@ describe('mars-escrow', () => {
     // get user escrow account
     let stake_index = 0;
     const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
-      [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+      [stakers[stake_index].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
         new anchor.BN(stake_index).toString()
       ))],
       program.programId
     );
 
     let balance_before = await provider.connection.getBalance(stakers[0].publicKey);
-    try{
+    try {
       await program.rpc.cancel(
         new anchor.BN(stake_index),
         {
           accounts: {
-            staker: stakers[0].publicKey,
+            staker: stakers[stake_index].publicKey,
             vaultAccount: vault_account_pda,
             userEscrowAccount: _user_escrow_account_pda,
             systemProgram: anchor.web3.SystemProgram.programId,
           },
-          signers: [stakers[0]]
+          signers: [stakers[1]]
         }
       );
-      } catch(error)
-      {
-        assert.ok(error.code = 2001); // A has_one constraint was violated
-      }
-    let balance_after = await provider.connection.getBalance(stakers[0].publicKey);
-    assert(balance_after - balance_before, stake_amount)
+    } catch (error) {
+      assert.ok(error.code = 2001); // A has_one constraint was violated
+    }
 
   });
 
@@ -232,7 +244,13 @@ describe('mars-escrow', () => {
   it("release should fail with wrong signer", async () => {
     let receiver = new anchor.web3.Keypair();
     console.log("receiver: ", receiver.publicKey.toString());
-
+    let stake_index = 0;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[0].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
     // release
     try {
       await program.rpc.release(
@@ -242,7 +260,7 @@ describe('mars-escrow', () => {
             receiver: receiver.publicKey,
             escrowAccount: escrow_account_pda,
             vaultAccount: vault_account_pda,
-            userEscrowAccount: user_escrow_account_pda,
+            userEscrowAccount: _user_escrow_account_pda,
             systemProgram: anchor.web3.SystemProgram.programId,
           },
           signers: [stakers[1]]
@@ -259,21 +277,29 @@ describe('mars-escrow', () => {
     let _escrowAccount = await program.account.escrowAccount.fetch(
       escrow_account_pda
     );
+    let stake_index = 1;
+    const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
+      [stakers[stake_index].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
+        new anchor.BN(stake_index).toString()
+      ))],
+      program.programId
+    );
+
     let receiver = new anchor.web3.Keypair();
     console.log("receiver: ", receiver.publicKey.toString());
-
+      
     // stake
     await program.rpc.release(
       {
         accounts: {
-          staker: stakers[0].publicKey,
+          staker: stakers[stake_index].publicKey,
           receiver: receiver.publicKey,
           escrowAccount: escrow_account_pda,
           vaultAccount: vault_account_pda,
-          userEscrowAccount: user_escrow_account_pda,
+          userEscrowAccount: _user_escrow_account_pda,
           systemProgram: anchor.web3.SystemProgram.programId,
         },
-        signers: [stakers[0]]
+        signers: [stakers[stake_index]]
       }
     );
     let receiver_balance = await provider.connection.getBalance(vault_account_pda);

@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_lang::system_program::{transfer};
 
-declare_id!("FBqs6w6dNmKCvL2J55K8VKP1CNV7vKfUYyLskhZfaWas");
+declare_id!("4MgS65CAEk8NN8EWt41SZU9cFpZ5xbaG5QeS5HL9b8kB");
 
 #[program]
 pub mod anchor_escrow {
@@ -43,7 +43,7 @@ pub mod anchor_escrow {
 
     pub fn cancel(
         ctx: Context<Cancel>,
-        stake_index: u64,
+        _stake_index: u64,
     ) -> Result<()> {
         
         // refund SOL
