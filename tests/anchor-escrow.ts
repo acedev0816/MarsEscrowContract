@@ -228,16 +228,17 @@ describe('mars-escrow', () => {
       new anchor.BN(stake_index),
       {
         accounts: {
-          staker: stakers[0].publicKey,
+          staker: stakers[stake_index].publicKey,
           vaultAccount: vault_account_pda,
           userEscrowAccount: _user_escrow_account_pda,
           systemProgram: anchor.web3.SystemProgram.programId,
         },
-        signers: [stakers[0]]
+        signers: [stakers[stake_index]]
       }
     );
-    let balance_after = await provider.connection.getBalance(stakers[0].publicKey);
-    assert(balance_after - balance_before, stake_amount)
+    let balance_after = await provider.connection.getBalance(stakers[stake_index].publicKey);
+    console.log("stake_amount", stake_amount, "balance change", balance_after - balance_before);
+    assert.ok (balance_after - balance_before >= stake_amount)
 
   });
 
@@ -256,7 +257,7 @@ describe('mars-escrow', () => {
       await program.rpc.release(
         {
           accounts: {
-            staker: stakers[1].publicKey,
+            staker: stakers[stake_index].publicKey,
             receiver: receiver.publicKey,
             escrowAccount: escrow_account_pda,
             vaultAccount: vault_account_pda,
@@ -274,9 +275,6 @@ describe('mars-escrow', () => {
 
   it("release success with correct signer", async () => {
     // get current index
-    let _escrowAccount = await program.account.escrowAccount.fetch(
-      escrow_account_pda
-    );
     let stake_index = 1;
     const [_user_escrow_account_pda, _user_escrow_account_bump] = await PublicKey.findProgramAddress(
       [stakers[stake_index].publicKey.toBuffer(), Buffer.from(anchor.utils.bytes.utf8.encode(
@@ -284,10 +282,16 @@ describe('mars-escrow', () => {
       ))],
       program.programId
     );
-
+    //check user escrow account
+    let _uea = await program.account.userEscrowAccount.fetch(
+      _user_escrow_account_pda
+    );
+    console.log("uea amount", _uea.amount.toNumber());
+    // console.log("valut balance", await provider.connection.getBalance(vault_account_pda));
+    //end: check
     let receiver = new anchor.web3.Keypair();
     console.log("receiver: ", receiver.publicKey.toString());
-      
+    // console.log("program.account", program.account);
     // stake
     await program.rpc.release(
       {
@@ -302,9 +306,8 @@ describe('mars-escrow', () => {
         signers: [stakers[stake_index]]
       }
     );
-    let receiver_balance = await provider.connection.getBalance(vault_account_pda);
-    console.log("receiver balance", receiver_balance);
-
+    let receiver_balance = await provider.connection.getBalance(receiver.publicKey);
+    console.log("receiver balance", receiver_balance, stake_amount);
     assert.ok(receiver_balance >= stake_amount);
   });
 });

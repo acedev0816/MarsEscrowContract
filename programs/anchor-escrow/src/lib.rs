@@ -62,8 +62,6 @@ pub mod anchor_escrow {
         ctx: Context<Release>,
     ) -> Result<()> {
         let amount:u64 = ctx.accounts.user_escrow_account.amount;
-
-
         let from: AccountInfo = ctx.accounts.vault_account.to_account_info();
         let to: AccountInfo = ctx.accounts.receiver.to_account_info();
         **from.try_borrow_mut_lamports()? -= amount;
