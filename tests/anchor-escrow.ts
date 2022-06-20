@@ -8,9 +8,9 @@ import { assert } from "chai";
 
 describe('mars-escrow', () => {
   const commitment: Commitment = 'processed';
-  const connection = new Connection('https://api.devnet.solana.com', { commitment, wsEndpoint: 'wss://api.devnet.solana.com/' });
-  const options = anchor.Provider.defaultOptions();
-  const wallet = NodeWallet.local();
+  // const connection = new Connection('https://api.devnet.solana.com', { commitment, wsEndpoint: 'wss://api.devnet.solana.com/' });
+  // const options = anchor.Provider.defaultOptions();
+  // const wallet = NodeWallet.local();
   // let provider = new anchor.Provider(connection, wallet, options);
   const provider = anchor.Provider.env();
   console.log("Test Start" /*, provider.connection._rpcEndPoint*/);
@@ -19,7 +19,7 @@ describe('mars-escrow', () => {
   const idl = JSON.parse(
     require("fs").readFileSync("./target/idl/anchor_escrow.json", "utf8")
   );
-  const programId = new anchor.web3.PublicKey("4MgS65CAEk8NN8EWt41SZU9cFpZ5xbaG5QeS5HL9b8kB");
+  const programId = new anchor.web3.PublicKey("9A3F4wjVyduMP8dAeQJjsiSpCqdgeoyimgfzRTkdieHg");
   const program = new anchor.Program(idl, programId);
 
   let escrow_account_pda = null;
