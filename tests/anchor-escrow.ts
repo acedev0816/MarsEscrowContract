@@ -207,7 +207,7 @@ describe('mars-escrow', () => {
           signers: [stakers[1]]
         }
       );
-    } catch (error) {
+    } catch (error) { 
       assert.ok(error.code = 2001); // A has_one constraint was violated
     }
 
